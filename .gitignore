@@ -1,0 +1,6 @@
+# The open-meet checkout cloned by setup.sh (build context).
+workspace/
+
+# Logs / OS noise
+*.log
+.DS_Store

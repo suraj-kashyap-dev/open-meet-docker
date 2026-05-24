@@ -1,0 +1,6 @@
+log_level: info
+ws_url: ws://livekit:7880
+redis:
+  address: redis:6379
+room_composite:
+  enabled: true

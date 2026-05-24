@@ -1,0 +1,231 @@
+name: openmeet-docker
+
+# A single built image (openmeet-app:local) runs all three apps. Only the
+# `server` service declares the build; `web` and `admin` reuse the same image
+# tag with a different command and working_dir. Because of that, the image must
+# exist before the first `up` — always run `docker compose build` (or
+# ./setup.sh, which does it for you) first.
+
+x-app-image: &app-image
+  image: openmeet-app:local
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omd-postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: openmeet
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d openmeet']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    container_name: omd-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: omd-livekit
+    restart: unless-stopped
+    ports:
+      - '7880:7880'
+      - '7881:7881'
+      - '7882:7882/udp'
+    volumes:
+      - ./config/livekit.yaml:/etc/livekit.yaml:ro
+    command: ['--config', '/etc/livekit.yaml', '--dev', '--bind', '0.0.0.0']
+    environment:
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:7880/']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+  livekit-egress:
+    image: livekit/egress:latest
+    container_name: omd-egress
+    restart: unless-stopped
+    volumes:
+      - uploads_data:/out
+      - ./config/egress.yaml:/etc/egress.yaml:ro
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: '${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}'
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    cap_add:
+      - SYS_ADMIN
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: omd-coturn
+    restart: unless-stopped
+    ports:
+      - '3478:3478/tcp'
+      - '3478:3478/udp'
+      - '5349:5349/tcp'
+      - '5349:5349/udp'
+      - '49160-49200:49160-49200/udp'
+    volumes:
+      - ./config/coturn.conf:/etc/coturn/turnserver.conf:ro
+    command: ['-c', '/etc/coturn/turnserver.conf']
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: omd-mailhog
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+  adminer:
+    image: adminer:latest
+    container_name: omd-adminer
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:8080'
+
+  server:
+    <<: *app-image
+    container_name: omd-server
+    build:
+      context: ./workspace
+      dockerfile: Dockerfile
+      args:
+        # These are compiled into the web/admin browser bundles at build time,
+        # so they must be the URLs the browser uses: the published localhost
+        # ports, never the internal Docker service names.
+        NEXT_PUBLIC_API_URL: http://localhost:3002
+        NEXT_PUBLIC_WS_URL: http://localhost:3002
+        NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
+        NEXT_PUBLIC_WEB_URL: http://localhost:3000
+    working_dir: /app/apps/server
+    entrypoint: ['sh', '/entrypoint.sh']
+    command: ['node', 'dist/main.js']
+    ports:
+      - '3002:3002'
+    volumes:
+      - ./scripts/server-entrypoint.sh:/entrypoint.sh:ro
+      - uploads_data:/app/apps/server/uploads
+    environment:
+      NODE_ENV: production
+      PORT: '3002'
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/openmeet
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRY: 7d
+      JWT_REFRESH_EXPIRY: 7d
+      ADMIN_JWT_ACCESS_SECRET: ${ADMIN_JWT_ACCESS_SECRET}
+      ADMIN_JWT_ACCESS_EXPIRY: 2h
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@example.com}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin12345}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-Example}
+      LOCAL_STORAGE_DIR: ./uploads
+      UPLOAD_MAX_SIZE_BYTES: '26214400'
+      # The API embeds this base into the upload URLs it returns to the browser,
+      # so it has to be browser-reachable (published port), not a service name.
+      API_PUBLIC_URL: http://localhost:3002
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      # The API talks to LiveKit container-to-container, so it uses the internal
+      # service name. The browser uses NEXT_PUBLIC_LIVEKIT_URL (a localhost port).
+      LIVEKIT_HOST: ws://livekit:7880
+      RECORDING_EGRESS_FILEPATH_PREFIX: /out
+      RECORDING_STORAGE_SUBDIR: recordings
+      RECORDING_LAYOUT: grid
+      FRONTEND_URL: http://localhost:3000
+      ADMIN_URL: http://localhost:3001
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: http://localhost:3002/api/auth/google/callback
+      SMTP_HOST: mailhog
+      SMTP_PORT: '1025'
+      SMTP_SECURE: 'false'
+      MAIL_FROM: open-meet <noreply@open-meet.local>
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3002/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  web:
+    <<: *app-image
+    container_name: omd-web
+    working_dir: /app/apps/web
+    command: ['node_modules/.bin/next', 'start', '--port', '3000']
+    ports:
+      - '3000:3000'
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3000/']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  admin:
+    <<: *app-image
+    container_name: omd-admin
+    working_dir: /app/apps/admin
+    command: ['node_modules/.bin/next', 'start', '--port', '3001']
+    ports:
+      - '3001:3001'
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3001/']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
