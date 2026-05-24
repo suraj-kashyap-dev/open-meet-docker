@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(sudo lsof -i :7880)"
+      "Bash(sudo lsof -i :7880)",
+      "Bash(docker compose *)"
     ]
   }
 }
