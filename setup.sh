@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# open-meet-docker — one-command bootstrap.
-#
-#   1. clone open-meet from GitHub into ./workspace (the Docker build context)
-#   2. drop the Dockerfile + .dockerignore into that checkout
-#   3. build the shared app image and bring the whole stack up
-#
-# The server container runs `prisma migrate deploy` on boot and the API
-# auto-creates the default admin, so once this script finishes the app is
-# ready to use.
+# open-meet-docker bootstrap: clone open-meet into ./workspace, add the Dockerfile,
+# build the shared image, and start the stack. Migrations and the default admin
+# run automatically on server boot, so the app is ready when this finishes.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,9 +71,8 @@ else
   fi
 fi
 
-# The Docker build context is workspace/, so the Dockerfile and .dockerignore
-# have to live inside it. They are copied (not committed there) on every run so
-# the checkout stays a pristine mirror of open-meet.
+# Build context is workspace/, so copy the Dockerfile + .dockerignore in on every
+# run (kept out of the checkout, which stays a pristine mirror of open-meet).
 cp "$ROOT/Dockerfile" "$WORKSPACE/Dockerfile"
 cat > "$WORKSPACE/.dockerignore" <<'EOF'
 .git

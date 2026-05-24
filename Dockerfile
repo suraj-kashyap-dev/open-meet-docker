@@ -1,13 +1,7 @@
 # syntax=docker/dockerfile:1
-#
-# One image for the entire open-meet pnpm/Turborepo monorepo. The same built
-# image runs all three apps (server, web, admin); docker-compose selects which
-# one through `command` + `working_dir`.
-#
-# The base image is Debian (glibc) rather than Alpine on purpose: the project's
-# native dependencies (argon2, sharp, the Prisma query engine) ship prebuilt
-# glibc binaries, so a glibc base loads them directly and avoids a slow,
-# fragile from-source rebuild against musl.
+
+# One image for the whole open-meet monorepo; compose runs it as server, web, and admin.
+# Debian (glibc) base so prebuilt native deps (argon2, sharp, Prisma engine) load without a from-source rebuild.
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 
@@ -23,15 +17,12 @@ WORKDIR /app
 
 FROM base AS build
 
-# python3/make/g++ are a safety net: if any native dependency lacks a prebuilt
-# binary for this platform, node-gyp falls back to compiling it from source.
+# Toolchain so node-gyp can compile any native dep that lacks a prebuilt binary.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ git \
  && rm -rf /var/lib/apt/lists/*
 
-# These NEXT_PUBLIC_* values are compiled into the browser bundles by
-# `next build`, so they must be present as build-time args. They are the URLs
-# the browser uses, hence the published localhost ports (not service names).
+# NEXT_PUBLIC_* are baked into the browser bundles at build time; use browser-reachable localhost ports.
 ARG NEXT_PUBLIC_API_URL=http://localhost:3002
 ARG NEXT_PUBLIC_WS_URL=http://localhost:3002
 ARG NEXT_PUBLIC_LIVEKIT_URL=ws://localhost:7880
@@ -46,25 +37,20 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
-# The server's TypeScript build references the generated Prisma client's types,
-# so the client must be generated before `turbo run build` compiles the server.
+# Generate the Prisma client first; the server's TypeScript build depends on its types.
 RUN pnpm --filter @open-meet/server exec prisma generate
 
-# --concurrency=1 serializes the build. The two Next.js builds are memory-heavy
-# and running them in parallel can exhaust RAM and get the build OOM-killed.
+# Serialize the build; parallel Next.js builds are memory-heavy and can get OOM-killed.
 RUN pnpm exec turbo run build --concurrency=1
 
 FROM base AS runtime
 ENV NODE_ENV=production
 
-# Carry the whole built workspace (compiled output, generated Prisma client, and
-# every runtime dependency). This is larger than a pruned image but reliable:
-# notably, next-intl reads its message JSON from the source tree at runtime, so
-# those files must be present in the final image.
+# Copy the whole built workspace; next-intl reads its message JSON from the source tree at runtime.
 COPY --from=build /app /app
 
 EXPOSE 3000 3001 3002
 
-# docker-compose overrides this per service; the API is the sensible default.
+# Default to the API; compose overrides command + working_dir per service.
 WORKDIR /app/apps/server
 CMD ["node", "dist/main.js"]

@@ -13,14 +13,11 @@ redis:
 webhook:
   api_key: devkey
   urls:
-    # The API runs as the `server` service on the compose network.
+    # `server` service on the compose network.
     - http://server:3002/api/livekit/webhook
 
 turn:
   enabled: false
-  # When promoting to staging/prod, point at coturn:
-  # domain: turn.example.com
-  # tls_port: 5349
-  # udp_port: 3478
+  # For staging/prod, point at coturn (set domain / tls_port / udp_port).
 
 log_level: info

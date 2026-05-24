@@ -1,10 +1,8 @@
 name: openmeet-docker
 
-# A single built image (openmeet-app:local) runs all three apps. Only the
-# `server` service declares the build; `web` and `admin` reuse the same image
-# tag with a different command and working_dir. Because of that, the image must
-# exist before the first `up` — always run `docker compose build` (or
-# ./setup.sh, which does it for you) first.
+# One built image (openmeet-app:local) runs all three apps. Only `server` declares
+# the build; `web` and `admin` reuse the tag with a different command + working_dir.
+# Build the image before the first `up` (./setup.sh does this for you).
 
 x-app-image: &app-image
   image: openmeet-app:local
@@ -126,9 +124,8 @@ services:
       context: ./workspace
       dockerfile: Dockerfile
       args:
-        # These are compiled into the web/admin browser bundles at build time,
-        # so they must be the URLs the browser uses: the published localhost
-        # ports, never the internal Docker service names.
+        # Baked into the web/admin browser bundles at build time: use browser-reachable
+        # localhost ports, never internal Docker service names.
         NEXT_PUBLIC_API_URL: http://localhost:3002
         NEXT_PUBLIC_WS_URL: http://localhost:3002
         NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
@@ -157,13 +154,11 @@ services:
       DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-Example}
       LOCAL_STORAGE_DIR: ./uploads
       UPLOAD_MAX_SIZE_BYTES: '26214400'
-      # The API embeds this base into the upload URLs it returns to the browser,
-      # so it has to be browser-reachable (published port), not a service name.
+      # Base for upload URLs the API returns to the browser: must be browser-reachable, not a service name.
       API_PUBLIC_URL: http://localhost:3002
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
-      # The API talks to LiveKit container-to-container, so it uses the internal
-      # service name. The browser uses NEXT_PUBLIC_LIVEKIT_URL (a localhost port).
+      # API ↔ LiveKit is container-to-container, so use the internal service name.
       LIVEKIT_HOST: ws://livekit:7880
       RECORDING_EGRESS_FILEPATH_PREFIX: /out
       RECORDING_STORAGE_SUBDIR: recordings

@@ -1,7 +1,6 @@
 #!/bin/sh
-# Server entrypoint: apply migrations, then start the API.
-# `prisma migrate deploy` is idempotent, so this is safe on every boot.
-# The API auto-creates the default admin on first start when none exists.
+# Apply migrations (idempotent), then start the API. The API creates the default
+# admin on first boot when none exists.
 set -e
 
 cd /app/apps/server
