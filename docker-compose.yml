@@ -160,6 +160,8 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
       # API ↔ LiveKit is container-to-container, so use the internal service name.
       LIVEKIT_HOST: ws://livekit:7880
+      # URL the API hands back in join tokens: the browser resolves this, not the service name.
+      LIVEKIT_PUBLIC_URL: ws://localhost:7880
       RECORDING_EGRESS_FILEPATH_PREFIX: /out
       RECORDING_STORAGE_SUBDIR: recordings
       RECORDING_LAYOUT: grid
